@@ -72,6 +72,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 .result-hint { font-size:.7rem; color:#4a5568; margin-top:8px; }
 .result-err  { color:#fc8181; font-size:.82rem; padding:10px 0; }
 
+
 .drop-zone { border:2px dashed #2d3748; border-radius:10px; padding:20px 16px;
   text-align:center; cursor:pointer; transition:border-color .15s, background .15s;
   margin-bottom:12px; }
@@ -83,6 +84,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 .dz-text strong { color:#a0aec0; }
 .dz-file-row { display:flex; align-items:center; gap:10px; justify-content:center;
   flex-wrap:wrap; }
+
+/* ── Timezone row ── */
+.tz-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  margin-top:12px; padding-top:12px; border-top:1px solid #1e2636; }
+.tz-row-label { font-size:.73rem; color:#718096; white-space:nowrap; }
+.tz-select { background:#0f1117; border:1px solid #2d3748; border-radius:8px;
+  color:#e2e8f0; font-size:.82rem; padding:7px 10px; outline:none;
+  cursor:pointer; flex:1; min-width:190px; }
+.tz-select:focus { border-color:#e8a020; }
+.tz-offset-badge { font-size:.68rem; font-weight:700; padding:2px 9px;
+  border-radius:20px; white-space:nowrap; }
+.tz-note { font-size:.68rem; color:#4a5568; flex-basis:100%; margin-top:1px; }
+/* Segmented on/off toggle */
+.tz-toggle { display:flex; border-radius:20px; overflow:hidden;
+  border:1px solid #2d3748; flex-shrink:0; }
+.tz-toggle-seg { padding:4px 12px; font-size:.68rem; font-weight:700;
+  cursor:pointer; border:none; background:#0f1117; color:#4a5568;
+  transition:background .15s, color .15s; white-space:nowrap; }
+.tz-toggle-seg.active-on  { background:#1c3d2f; color:#68d391; }
+.tz-toggle-seg.active-off { background:#3d1c1c; color:#fc8181; }
+
 </style>
 </head>
 <body>
@@ -125,20 +147,38 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         <div class="hint">Auto-filled when a file is loaded — or type it in manually</div>
       </div>
     </div>
+
+    <!-- Timezone offset row — shown after a file is loaded -->
+    <div class="tz-row" id="tzRow" style="display:none">
+      <div class="tz-row-label">🌏 Timezone offset</div>
+      <div class="tz-toggle">
+        <button class="tz-toggle-seg active-on"  id="tzBtnOn"  onclick="setTzEnabled(true)">On</button>
+        <button class="tz-toggle-seg"             id="tzBtnOff" onclick="setTzEnabled(false)">Off</button>
+      </div>
+      <select class="tz-select" id="tzZone" onchange="onTzChange()">
+        <option value="eastern">Eastern Australia (VIC / NSW / ACT / TAS)</option>
+        <option value="queensland">Queensland (no DST)</option>
+        <option value="adelaide">South Australia (SA)</option>
+        <option value="darwin">Northern Territory (NT, no DST)</option>
+        <option value="perth">Western Australia (WA, no DST)</option>
+      </select>
+      <span class="tz-offset-badge" id="tzBadge">—</span>
+      <div class="tz-note" id="tzNote"></div>
+    </div>
   </div>
 
   <!-- Converter -->
   <div class="panel">
     <div class="panel-title">🔄 Convert</div>
     <div class="tabs">
-      <button class="tab active" id="tab-e2t" onclick="setMode('e2t')">Elapsed → Time of Day</button>
-      <button class="tab"        id="tab-t2e" onclick="setMode('t2e')">Time of Day → Elapsed</button>
+      <button class="tab active" id="tab-e2t" onclick="setMode('e2t')">Elapsed → ToD</button>
+      <button class="tab"        id="tab-t2e" onclick="setMode('t2e')">ToD → Elapsed</button>
     </div>
 
     <div id="inp-e2t">
       <div class="field">
         <label>Elapsed time shown in VLC (MM:SS or HH:MM:SS)</label>
-        <input class="inp" id="val-elapsed" placeholder="e.g. 14:32" oninput="doConvert()">
+        <input class="inp" id="val-elapsed" placeholder="e.g. 14:32" oninput="autoColon(event)">
         <div class="hint">The playback position counter at the bottom of VLC</div>
       </div>
     </div>
@@ -146,9 +186,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     <div id="inp-t2e" style="display:none">
       <div class="field">
         <label>Time-of-day timecode from EVS (HH:MM:SS or HH:MM:SS:FF)</label>
-        <input class="inp" id="val-tod" placeholder="e.g. 19:06:43:00" oninput="doConvert()">
+        <input class="inp" id="val-tod" placeholder="e.g. 19:06:43:00" oninput="autoColon(event)">
       </div>
     </div>
+
 
     <div id="result"></div>
   </div>
@@ -160,6 +201,159 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 const FPS = 25;
 let mode = 'e2t';
+
+// ── Timezone offset ───────────────────────────────────────────────────────────
+// Converts recording-local timecode to EVS Eastern-Australia timecode.
+// The EVS is assumed to be in the Eastern timezone (AEDT/AEST).
+// tzOffsetSecs is added to startSecs before any calculation.
+
+const TEAM_ZONES = {
+  // South Australia
+  ADE:'adelaide', ADL:'adelaide',           // Adelaide Crows
+  POR:'adelaide', PORT:'adelaide',          // Port Adelaide Power
+
+  // Eastern (VIC / NSW / ACT / TAS)
+  MEL:'eastern',  MELB:'eastern',           // Melbourne Demons
+  COL:'eastern',  COLL:'eastern',           // Collingwood Magpies
+  ESS:'eastern',                            // Essendon Bombers
+  HAW:'eastern',                            // Hawthorn Hawks
+  STK:'eastern',  SKL:'eastern',            // St Kilda Saints
+  WBD:'eastern',  WBL:'eastern',            // Western Bulldogs
+  GEE:'eastern',  GEEL:'eastern',           // Geelong Cats
+  RIC:'eastern',  RICH:'eastern',           // Richmond Tigers
+  CAR:'eastern',  CARL:'eastern',           // Carlton Blues
+  NM:'eastern',   NTH:'eastern',  NOR:'eastern',  NMF:'eastern',  // North Melbourne
+  SYD:'eastern',  SYDN:'eastern',           // Sydney Swans
+  GWS:'eastern',  GWB:'eastern',            // GWS Giants
+
+  // Queensland (no DST)
+  BRL:'queensland', LIO:'queensland', BRI:'queensland', BRIS:'queensland', // Brisbane Lions
+  GCS:'queensland', GCK:'queensland', GCF:'queensland', GCFC:'queensland', // Gold Coast Suns
+
+  // Western Australia (no DST)
+  FRE:'perth',    FREM:'perth',             // Fremantle Dockers
+  WCE:'perth',    WCO:'perth',              // West Coast Eagles
+};
+
+let tzZone       = 'eastern';
+let tzDate       = new Date();
+let tzOffsetSecs = 0;
+let tzEnabled    = true;    // can be toggled off per-file
+let evsTZName    = 'AEST';  // updated whenever zone/date changes
+
+function firstSundayOf(year, month0) {
+  const d = new Date(year, month0, 1);
+  while (d.getDay() !== 0) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+// Eastern Australia DST: first Sunday in October → first Sunday in April
+function isEasternDST(d) {
+  const y = d.getFullYear(), mo = d.getMonth(); // mo is 0-indexed
+  if (mo >= 4 && mo <= 8) return false;           // May–Sep: never DST
+  if (mo >= 10 || mo <= 2) return true;           // Nov–Mar: always DST
+  if (mo === 9)  return d >= firstSundayOf(y, 9); // Oct: DST starts 1st Sunday
+  if (mo === 3)  return d <  firstSundayOf(y, 3); // Apr: DST ends 1st Sunday
+  return false;
+}
+
+function calcTzInfo(zone, date) {
+  const dst    = isEasternDST(date);
+  const evsUTC = dst ? 11 : 10;
+  const evsTZ  = dst ? 'AEDT' : 'AEST';
+
+  let recUTC, recTZ;
+  switch (zone) {
+    case 'eastern':    recUTC = evsUTC;  recTZ = evsTZ;  break;
+    case 'queensland': recUTC = 10;      recTZ = 'AEST'; break;
+    case 'adelaide':   recUTC = dst ? 10.5 : 9.5; recTZ = dst ? 'ACDT' : 'ACST'; break;
+    case 'darwin':     recUTC = 9.5;    recTZ = 'ACST'; break;
+    case 'perth':      recUTC = 8;      recTZ = 'AWST'; break;
+    default:           recUTC = evsUTC; recTZ = evsTZ;
+  }
+
+  const offsetSecs = Math.round((evsUTC - recUTC) * 3600);
+  const abs  = Math.abs(offsetSecs);
+  const sign = offsetSecs >= 0 ? '+' : '−';
+  const hh   = Math.floor(abs / 3600);
+  const mm   = Math.floor((abs % 3600) / 60);
+  const offsetStr = hh > 0
+    ? `${sign}${hh}h${mm > 0 ? pad(mm) + 'm' : ''}`
+    : `${sign}${mm}m`;
+
+  let label;
+  if (offsetSecs === 0) label = `No offset — recording is already in ${evsTZ}`;
+  else                  label = `${recTZ} → ${evsTZ}: ${offsetStr} applied to start TC`;
+
+  return { evsTZ, recTZ, offsetSecs, offsetStr, label };
+}
+
+function applyTzZone(zone, date, autoTeam) {
+  tzZone = zone;
+  if (date) tzDate = date;
+  const info    = calcTzInfo(zone, tzDate);
+  evsTZName     = info.evsTZ;
+  tzOffsetSecs  = tzEnabled ? info.offsetSecs : 0;
+
+  // Badge
+  const badge = document.getElementById('tzBadge');
+  if (!tzEnabled) {
+    badge.textContent = 'Off';
+    badge.style.cssText = 'background:#2d3748;color:#718096';
+  } else if (info.offsetSecs === 0) {
+    badge.textContent = 'No offset';
+    badge.style.cssText = 'background:#1c3d2f;color:#68d391';
+  } else {
+    badge.textContent = info.offsetStr;
+    badge.style.cssText = 'background:#2d2a1c;color:#fbd38d';
+  }
+
+  // Note line
+  let note = tzEnabled ? info.label : 'Offset disabled — using TC as-is';
+  if (autoTeam) note += ` · auto-detected from ${autoTeam}`;
+  document.getElementById('tzNote').textContent = note;
+
+  document.getElementById('tzZone').value = zone;
+  doConvert();
+}
+
+function onTzChange() {
+  applyTzZone(document.getElementById('tzZone').value, null, null);
+}
+
+function setTzEnabled(val) {
+  tzEnabled = val;
+  document.getElementById('tzBtnOn').className  = 'tz-toggle-seg' + (val  ? ' active-on'  : '');
+  document.getElementById('tzBtnOff').className = 'tz-toggle-seg' + (!val ? ' active-off' : '');
+  applyTzZone(tzZone, null, null);
+}
+
+// Extract home team code from AFL-style filename (first team before " v ")
+function zoneFromFilename(filename) {
+  const m = filename.match(/[_\-\s]([A-Z]{2,5})[_\-\s]v[_\-\s]/i);
+  if (!m) return { zone: null, team: null };
+  const team = m[1].toUpperCase();
+  return { zone: TEAM_ZONES[team] || null, team };
+}
+
+// ── Auto-colon formatting ─────────────────────────────────────────────────────
+// Strips non-digits and re-inserts colons every 2 digits as the user types.
+// e.g.  "1432"     → "14:32"
+//       "180918"   → "18:09:18"
+//       "18091812" → "18:09:18:12"
+
+function autoColon(e) {
+  const inp = e.target;
+  if (e.inputType && e.inputType.startsWith('delete')) { doConvert(); return; }
+  const d = inp.value.replace(/\D/g, '').slice(0, 8);
+  let out = d;
+  if      (d.length > 6) out = d.slice(0,2)+':'+d.slice(2,4)+':'+d.slice(4,6)+':'+d.slice(6);
+  else if (d.length > 4) out = d.slice(0,2)+':'+d.slice(2,4)+':'+d.slice(4);
+  else if (d.length > 2) out = d.slice(0,2)+':'+d.slice(2);
+  inp.value = out;
+  inp.setSelectionRange(out.length, out.length);
+  doConvert();
+}
 
 // ── Timecode math ─────────────────────────────────────────────────────────────
 
@@ -501,6 +695,20 @@ async function processFile(file) {
     console.error('TC read error:', e);
     setBadge('Read error — enter TC manually', 'err');
   }
+
+  // ── Timezone auto-detection ────────────────────────────────────────────────
+  const { zone: detectedZone, team: detectedTeam } = zoneFromFilename(file.name);
+  const fileDate = new Date(file.lastModified);
+  tzEnabled = true;
+  document.getElementById('tzBtnOn').className  = 'tz-toggle-seg active-on';
+  document.getElementById('tzBtnOff').className = 'tz-toggle-seg';
+  document.getElementById('tzRow').style.display = '';
+  applyTzZone(detectedZone || 'eastern', fileDate, detectedTeam && detectedZone ? detectedTeam : null);
+  // If we couldn't detect from filename, nudge user
+  if (!detectedZone) {
+    document.getElementById('tzNote').textContent =
+      'Could not detect location from filename — select game city above if needed';
+  }
   doConvert();
 }
 
@@ -551,16 +759,25 @@ function setMode(m) {
   document.getElementById('result').innerHTML = '';
 }
 
+// ── Main converter ─────────────────────────────────────────────────────────────
+
 function doConvert() {
   const resultEl = document.getElementById('result');
   const startStr = document.getElementById('startTC').value.trim();
   if (!startStr) { resultEl.innerHTML = ''; return; }
 
-  const startSecs = tcToSecs(startStr);
-  if (startSecs === null) {
+  const rawStart = tcToSecs(startStr);
+  if (rawStart === null) {
     resultEl.innerHTML = '<div class="result-err">⚠ Invalid start timecode — use HH:MM:SS:FF</div>';
     return;
   }
+
+  // Apply timezone offset (0 when disabled or Eastern location)
+  const startSecs = rawStart + tzOffsetSecs;
+  const tzLabel   = evsTZName || 'EVS';
+  const tzHint    = tzOffsetSecs !== 0
+    ? ` · ${calcTzInfo(tzZone, tzDate).recTZ} → ${tzLabel} (${calcTzInfo(tzZone, tzDate).offsetStr})`
+    : '';
 
   if (mode === 'e2t') {
     const elapsedStr = document.getElementById('val-elapsed').value.trim();
@@ -573,12 +790,12 @@ function doConvert() {
     const tod = secsToTC(startSecs + elapsed);
     resultEl.innerHTML = `
       <div class="result-box">
-        <div class="result-label">Time of Day — use this on EVS</div>
+        <div class="result-label">Time of Day (${tzLabel}) — use this on EVS</div>
         <div class="result-val" onclick="copyVal(this)">${tod}</div>
-        <div class="result-hint">Click to copy</div>
+        <div class="result-hint">Click to copy${tzHint}</div>
       </div>`;
 
-  } else {
+  } else if (mode === 't2e') {
     const todStr = document.getElementById('val-tod').value.trim();
     if (!todStr) { resultEl.innerHTML = ''; return; }
     const todSecs = parseTOD(todStr);
@@ -599,8 +816,9 @@ function doConvert() {
       <div class="result-box">
         <div class="result-label">File Elapsed — scrub VLC to this position</div>
         <div class="result-val" onclick="copyVal(this)">${elStr}</div>
-        <div class="result-hint">MM:SS:FF — click to copy</div>
+        <div class="result-hint">MM:SS:FF — click to copy${tzHint}</div>
       </div>`;
+
   }
 }
 
@@ -621,5 +839,6 @@ if (urlTC) {
   setBadge('Pre-filled from link', 'warn');
 }
 </script>
+
 </body>
 </html>
