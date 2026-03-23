@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AFL Timecode Calculator</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+.header { background: linear-gradient(135deg,#1a1f2e,#16213e);
+  border-bottom: 1px solid #2d3748; padding: 18px 28px;
+  display: flex; align-items: center; gap: 14px; }
+.logo { width:40px; height:40px; background: linear-gradient(135deg,#e8a020,#f4c842);
+  border-radius:9px; display:flex; align-items:center; justify-content:center;
+  font-size:18px; font-weight:900; color:#0f1117; flex-shrink:0; }
+.header h1 { font-size:1.25rem; font-weight:700; color:#f7fafc; }
+.header p  { font-size:0.78rem; color:#718096; margin-top:1px; }
+
+.main { max-width:680px; margin:0 auto; padding:22px 20px; }
+
+.panel { background:#1a1f2e; border:1px solid #2d3748; border-radius:12px;
+  padding:18px 20px; margin-bottom:18px; }
+.panel-title { font-size:0.9rem; font-weight:700; color:#e2e8f0; margin-bottom:12px; }
+
+.row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.field { flex:1; min-width:180px; }
+.field label { display:block; font-size:.73rem; color:#718096; margin-bottom:5px; }
+.inp { width:100%; padding:9px 12px; background:#0f1117; border:1px solid #2d3748;
+  border-radius:8px; color:#e2e8f0; font-size:.92rem; font-family:monospace;
+  outline:none; transition:border-color .15s; }
+.inp:focus { border-color:#e8a020; }
+.hint { font-size:.7rem; color:#4a5568; margin-top:4px; }
+
+.btn { padding:9px 18px; border-radius:8px; border:none; cursor:pointer;
+  font-size:.83rem; font-weight:700; transition:all .15s; white-space:nowrap; }
+.btn-primary   { background:linear-gradient(135deg,#e8a020,#f4c842); color:#0f1117; }
+.btn-primary:hover { opacity:.9; }
+.btn-secondary { background:#2d3748; color:#e2e8f0; }
+.btn-secondary:hover { background:#3d4a5e; }
+
+.tabs { display:flex; gap:6px; margin-bottom:16px; }
+.tab  { padding:7px 14px; border-radius:8px; border:1px solid #2d3748;
+  background:transparent; color:#718096; cursor:pointer;
+  font-size:.8rem; font-weight:600; transition:all .15s; }
+.tab.active { border-color:#e8a020; background:#2d2a1c; color:#f4c842; }
+.tab:hover:not(.active) { border-color:#4a5568; color:#a0aec0; }
+
+.tc-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  background:#0f1117; border:1px solid #2d3748; border-radius:8px;
+  padding:10px 14px; margin-bottom:10px; }
+.tc-filename { font-size:.78rem; color:#718096;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.tc-badge { font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:20px;
+  white-space:nowrap; }
+.tc-badge.ok   { background:#1c3d2f; color:#68d391; }
+.tc-badge.warn { background:#2d2a1c; color:#fbd38d; }
+.tc-badge.err  { background:#3d1c1c; color:#fc8181; }
+.tc-badge.idle { background:#2d3748; color:#718096; }
+
+.result-box { background:#0f1117; border:1px solid #2d3748; border-radius:10px;
+  padding:16px 18px; margin-top:16px; }
+.result-label { font-size:.66rem; color:#718096; text-transform:uppercase;
+  letter-spacing:.06em; margin-bottom:8px; }
+.result-val { font-family:monospace; font-size:1.7rem; font-weight:700;
+  color:#f4c842; cursor:pointer; padding:10px 14px;
+  background:#1a1f2e; border-radius:8px; border:1px solid transparent;
+  transition:border-color .15s; display:inline-block; user-select:all; }
+.result-val:hover  { border-color:#4a5568; }
+.result-val.copied { border-color:#68d391; color:#68d391; }
+.result-hint { font-size:.7rem; color:#4a5568; margin-top:8px; }
+.result-err  { color:#fc8181; font-size:.82rem; padding:10px 0; }
+
+
+.drop-zone { border:2px dashed #2d3748; border-radius:10px; padding:20px 16px;
+  text-align:center; cursor:pointer; transition:border-color .15s, background .15s;
+  margin-bottom:12px; }
+.drop-zone:hover { border-color:#4a5568; background:#161b27; }
+.drop-zone.drag-over { border-color:#e8a020; background:#1e1a0e; }
+.drop-zone.has-file  { border-style:solid; border-color:#2d3748; }
+.dz-icon  { font-size:1.5rem; margin-bottom:6px; }
+.dz-text  { font-size:.8rem; color:#718096; }
+.dz-text strong { color:#a0aec0; }
+.dz-file-row { display:flex; align-items:center; gap:10px; justify-content:center;
+  flex-wrap:wrap; }
+
+/* ── Timezone row ── */
+.tz-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  margin-top:12px; padding-top:12px; border-top:1px solid #1e2636; }
+.tz-row-label { font-size:.73rem; color:#718096; white-space:nowrap; }
+.tz-select { background:#0f1117; border:1px solid #2d3748; border-radius:8px;
+  color:#e2e8f0; font-size:.82rem; padding:7px 10px; outline:none;
+  cursor:pointer; flex:1; min-width:190px; }
+.tz-select:focus { border-color:#e8a020; }
+.tz-offset-badge { font-size:.68rem; font-weight:700; padding:2px 9px;
+  border-radius:20px; white-space:nowrap; }
+.tz-note { font-size:.68rem; color:#4a5568; flex-basis:100%; margin-top:1px; }
+/* Segmented on/off toggle */
+.tz-toggle { display:flex; border-radius:20px; overflow:hidden;
+  border:1px solid #2d3748; flex-shrink:0; }
+.tz-toggle-seg { padding:4px 12px; font-size:.68rem; font-weight:700;
+  cursor:pointer; border:none; background:#0f1117; color:#4a5568;
+  transition:background .15s, color .15s; white-space:nowrap; }
+.tz-toggle-seg.active-on  { background:#1c3d2f; color:#68d391; }
+.tz-toggle-seg.active-off { background:#3d1c1c; color:#fc8181; }
+
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">TC</div>
+  <div>
+    <h1>AFL Timecode Calculator</h1>
+    <p>File elapsed time &nbsp;↔&nbsp; Time of Day (EVS)</p>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- File + Start TC -->
+  <div class="panel">
+    <div class="panel-title">📁 Video File</div>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div id="dzIdle">
+        <div class="dz-icon">🎬</div>
+        <div class="dz-text"><strong>Drop a video file here</strong> or click to browse</div>
+        <div class="dz-text" style="margin-top:4px;font-size:.7rem">MP4 · MOV · MXF — start timecode read automatically</div>
+      </div>
+      <div id="dzFile" style="display:none">
+        <div class="dz-file-row">
+          <span class="tc-filename" id="fileName" style="max-width:340px"></span>
+          <span class="tc-badge idle" id="tcBadge">—</span>
+          <button class="btn btn-secondary" style="font-size:.75rem;padding:5px 12px"
+                  onclick="event.stopPropagation();document.getElementById('fileInput').click()">Change…</button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept=".mp4,.mov,.mxf,.avi,.mkv"
+           style="display:none" onchange="onFileSelected(this)">
+
+    <div class="row">
+      <div class="field">
+        <label>Start timecode (HH:MM:SS:FF)</label>
+        <input class="inp" id="startTC" placeholder="e.g. 18:49:18:12" oninput="doConvert()">
+        <div class="hint">Auto-filled when a file is loaded — or type it in manually</div>
+      </div>
+    </div>
+
+    <!-- Timezone offset row — shown after a file is loaded -->
+    <div class="tz-row" id="tzRow" style="display:none">
+      <div class="tz-row-label">🌏 Timezone offset</div>
+      <div class="tz-toggle">
+        <button class="tz-toggle-seg active-on"  id="tzBtnOn"  onclick="setTzEnabled(true)">On</button>
+        <button class="tz-toggle-seg"             id="tzBtnOff" onclick="setTzEnabled(false)">Off</button>
+      </div>
+      <select class="tz-select" id="tzZone" onchange="onTzChange()">
+        <option value="eastern">Eastern Australia (VIC / NSW / ACT / TAS)</option>
+        <option value="queensland">Queensland (no DST)</option>
+        <option value="adelaide">South Australia (SA)</option>
+        <option value="darwin">Northern Territory (NT, no DST)</option>
+        <option value="perth">Western Australia (WA, no DST)</option>
+      </select>
+      <span class="tz-offset-badge" id="tzBadge">—</span>
+      <div class="tz-note" id="tzNote"></div>
+    </div>
+  </div>
+
+  <!-- Converter -->
+  <div class="panel">
+    <div class="panel-title">🔄 Convert</div>
+    <div class="tabs">
+      <button class="tab active" id="tab-e2t" onclick="setMode('e2t')">Elapsed → ToD</button>
+      <button class="tab"        id="tab-t2e" onclick="setMode('t2e')">ToD → Elapsed</button>
+    </div>
+
+    <div id="inp-e2t">
+      <div class="field">
+        <label>Elapsed time shown in VLC (MM:SS or HH:MM:SS)</label>
+        <input class="inp" id="val-elapsed" placeholder="e.g. 14:32" oninput="autoColon(event)">
+        <div class="hint">The playback position counter at the bottom of VLC</div>
+      </div>
+    </div>
+
+    <div id="inp-t2e" style="display:none">
+      <div class="field">
+        <label>Time-of-day timecode from EVS (HH:MM:SS or HH:MM:SS:FF)</label>
+        <input class="inp" id="val-tod" placeholder="e.g. 19:06:43:00" oninput="autoColon(event)">
+      </div>
+    </div>
+
+
+    <div id="result"></div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+'use strict';
+
+const FPS = 25;
+let mode = 'e2t';
+
+// ── Timezone offset ───────────────────────────────────────────────────────────
+// Converts recording-local timecode to EVS Eastern-Australia timecode.
+// The EVS is assumed to be in the Eastern timezone (AEDT/AEST).
+// tzOffsetSecs is added to startSecs before any calculation.
+
+const TEAM_ZONES = {
+  // South Australia
+  ADE:'adelaide', ADL:'adelaide',           // Adelaide Crows
+  POR:'adelaide', PORT:'adelaide',          // Port Adelaide Power
+
+  // Eastern (VIC / NSW / ACT / TAS)
+  MEL:'eastern',  MELB:'eastern',           // Melbourne Demons
+  COL:'eastern',  COLL:'eastern',           // Collingwood Magpies
+  ESS:'eastern',                            // Essendon Bombers
+  HAW:'eastern',                            // Hawthorn Hawks
+  STK:'eastern',  SKL:'eastern',            // St Kilda Saints
+  WBD:'eastern',  WBL:'eastern',            // Western Bulldogs
+  GEE:'eastern',  GEEL:'eastern',           // Geelong Cats
+  RIC:'eastern',  RICH:'eastern',           // Richmond Tigers
+  CAR:'eastern',  CARL:'eastern',           // Carlton Blues
+  NM:'eastern',   NTH:'eastern',  NOR:'eastern',  NMF:'eastern',  // North Melbourne
+  SYD:'eastern',  SYDN:'eastern',           // Sydney Swans
+  GWS:'eastern',  GWB:'eastern',            // GWS Giants
+
+  // Queensland (no DST)
+  BRL:'queensland', LIO:'queensland', BRI:'queensland', BRIS:'queensland', // Brisbane Lions
+  GCS:'queensland', GCK:'queensland', GCF:'queensland', GCFC:'queensland', // Gold Coast Suns
+
+  // Western Australia (no DST)
+  FRE:'perth',    FREM:'perth',             // Fremantle Dockers
+  WCE:'perth',    WCO:'perth',              // West Coast Eagles
+};
+
+let tzZone       = 'eastern';
+let tzDate       = new Date();
+let tzOffsetSecs = 0;
+let tzEnabled    = true;    // can be toggled off per-file
+let evsTZName    = 'AEST';  // updated whenever zone/date changes
+
+function firstSundayOf(year, month0) {
+  const d = new Date(year, month0, 1);
+  while (d.getDay() !== 0) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+// Eastern Australia DST: first Sunday in October → first Sunday in April
+function isEasternDST(d) {
+  const y = d.getFullYear(), mo = d.getMonth(); // mo is 0-indexed
+  if (mo >= 4 && mo <= 8) return false;           // May–Sep: never DST
+  if (mo >= 10 || mo <= 2) return true;           // Nov–Mar: always DST
+  if (mo === 9)  return d >= firstSundayOf(y, 9); // Oct: DST starts 1st Sunday
+  if (mo === 3)  return d <  firstSundayOf(y, 3); // Apr: DST ends 1st Sunday
+  return false;
+}
+
+function calcTzInfo(zone, date) {
+  const dst    = isEasternDST(date);
+  const evsUTC = dst ? 11 : 10;
+  const evsTZ  = dst ? 'AEDT' : 'AEST';
+
+  let recUTC, recTZ;
+  switch (zone) {
+    case 'eastern':    recUTC = evsUTC;  recTZ = evsTZ;  break;
+    case 'queensland': recUTC = 10;      recTZ = 'AEST'; break;
+    case 'adelaide':   recUTC = dst ? 10.5 : 9.5; recTZ = dst ? 'ACDT' : 'ACST'; break;
+    case 'darwin':     recUTC = 9.5;    recTZ = 'ACST'; break;
+    case 'perth':      recUTC = 8;      recTZ = 'AWST'; break;
+    default:           recUTC = evsUTC; recTZ = evsTZ;
+  }
+
+  const offsetSecs = Math.round((evsUTC - recUTC) * 3600);
+  const abs  = Math.abs(offsetSecs);
+  const sign = offsetSecs >= 0 ? '+' : '−';
+  const hh   = Math.floor(abs / 3600);
+  const mm   = Math.floor((abs % 3600) / 60);
+  const offsetStr = hh > 0
+    ? `${sign}${hh}h${mm > 0 ? pad(mm) + 'm' : ''}`
+    : `${sign}${mm}m`;
+
+  let label;
+  if (offsetSecs === 0) label = `No offset — recording is already in ${evsTZ}`;
+  else                  label = `${recTZ} → ${evsTZ}: ${offsetStr} applied to start TC`;
+
+  return { evsTZ, recTZ, offsetSecs, offsetStr, label };
+}
+
+function applyTzZone(zone, date, autoTeam) {
+  tzZone = zone;
+  if (date) tzDate = date;
+  const info    = calcTzInfo(zone, tzDate);
+  evsTZName     = info.evsTZ;
+  tzOffsetSecs  = tzEnabled ? info.offsetSecs : 0;
+
+  // Badge
+  const badge = document.getElementById('tzBadge');
+  if (!tzEnabled) {
+    badge.textContent = 'Off';
+    badge.style.cssText = 'background:#2d3748;color:#718096';
+  } else if (info.offsetSecs === 0) {
+    badge.textContent = 'No offset';
+    badge.style.cssText = 'background:#1c3d2f;color:#68d391';
+  } else {
+    badge.textContent = info.offsetStr;
+    badge.style.cssText = 'background:#2d2a1c;color:#fbd38d';
+  }
+
+  // Note line
+  let note = tzEnabled ? info.label : 'Offset disabled — using TC as-is';
+  if (autoTeam) note += ` · auto-detected from ${autoTeam}`;
+  document.getElementById('tzNote').textContent = note;
+
+  document.getElementById('tzZone').value = zone;
+  doConvert();
+}
+
+function onTzChange() {
+  applyTzZone(document.getElementById('tzZone').value, null, null);
+}
+
+function setTzEnabled(val) {
+  tzEnabled = val;
+  document.getElementById('tzBtnOn').className  = 'tz-toggle-seg' + (val  ? ' active-on'  : '');
+  document.getElementById('tzBtnOff').className = 'tz-toggle-seg' + (!val ? ' active-off' : '');
+  applyTzZone(tzZone, null, null);
+}
+
+// Extract home team code from AFL-style filename (first team before " v ")
+function zoneFromFilename(filename) {
+  const m = filename.match(/[_\-\s]([A-Z]{2,5})[_\-\s]v[_\-\s]/i);
+  if (!m) return { zone: null, team: null };
+  const team = m[1].toUpperCase();
+  return { zone: TEAM_ZONES[team] || null, team };
+}
+
+// ── Auto-colon formatting ─────────────────────────────────────────────────────
+// Strips non-digits and re-inserts colons every 2 digits as the user types.
+// e.g.  "1432"     → "14:32"
+//       "180918"   → "18:09:18"
+//       "18091812" → "18:09:18:12"
+
+function autoColon(e) {
+  const inp = e.target;
+  if (e.inputType && e.inputType.startsWith('delete')) { doConvert(); return; }
+  const d = inp.value.replace(/\D/g, '').slice(0, 8);
+  let out = d;
+  if      (d.length > 6) out = d.slice(0,2)+':'+d.slice(2,4)+':'+d.slice(4,6)+':'+d.slice(6);
+  else if (d.length > 4) out = d.slice(0,2)+':'+d.slice(2,4)+':'+d.slice(4);
+  else if (d.length > 2) out = d.slice(0,2)+':'+d.slice(2);
+  inp.value = out;
+  inp.setSelectionRange(out.length, out.length);
+  doConvert();
+}
+
+// ── Timecode math ─────────────────────────────────────────────────────────────
+
+function pad(n) { return String(Math.floor(Math.abs(n))).padStart(2, '0'); }
+
+function tcToSecs(tc) {
+  const p = tc.trim().split(':').map(Number);
+  if (p.length !== 4 || p.some(isNaN)) return null;
+  const [h, m, s, f] = p;
+  if (m > 59 || s > 59 || f >= FPS) return null;
+  return h * 3600 + m * 60 + s + f / FPS;
+}
+
+function secsToTC(s) {
+  if (s < 0) return null;
+  const totalF = Math.round(s * FPS);
+  const f  = totalF % FPS;
+  const ts = Math.floor(totalF / FPS);
+  return `${pad(ts/3600)}:${pad((ts%3600)/60)}:${pad(ts%60)}:${pad(f)}`;
+}
+
+function parseElapsed(t) {
+  t = t.trim();
+  let m;
+  m = t.match(/^(\d+):(\d{2}):(\d{2}):(\d{2})$/);
+  if (m) return +m[1]*3600 + +m[2]*60 + +m[3] + +m[4]/FPS;
+  m = t.match(/^(\d+):(\d{2}):(\d{2})$/);
+  if (m) return +m[1]*3600 + +m[2]*60 + +m[3];
+  m = t.match(/^(\d+):(\d{2})$/);
+  if (m) return +m[1]*60 + +m[2];
+  return null;
+}
+
+function parseTOD(t) {
+  t = t.trim();
+  let m;
+  m = t.match(/^(\d{1,2}):(\d{2}):(\d{2}):(\d{2})$/);
+  if (m) return +m[1]*3600 + +m[2]*60 + +m[3] + +m[4]/FPS;
+  m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (m) return +m[1]*3600 + +m[2]*60 + +m[3];
+  return null;
+}
+
+// ── File timecode reading ─────────────────────────────────────────────────────
+
+function fcc(bytes, off) {
+  return String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]);
+}
+function u32(view, off) { return view.getUint32(off, false); }
+
+function findBox(bytes, view, start, end, type) {
+  let off = start;
+  while (off + 8 <= end) {
+    const size = u32(view, off);
+    if (size < 8 || off + size > end) break;
+    if (fcc(bytes, off + 4) === type) return { s: off, e: off + size };
+    off += size;
+  }
+  return null;
+}
+
+function findAllBoxes(bytes, view, start, end, type) {
+  const out = [];
+  let off = start;
+  while (off + 8 <= end) {
+    const size = u32(view, off);
+    if (size < 8 || off + size > end) break;
+    if (fcc(bytes, off + 4) === type) out.push({ s: off, e: off + size });
+    off += size;
+  }
+  return out;
+}
+
+// Scan the top-level box headers in a head buffer to find the file offset where moov lives.
+// Works for the common layout: ftyp + [free] + mdat + moov
+// Returns the file-absolute offset of moov, or null if not determinable.
+function findMoovFileOffset(bytes, view) {
+  let off = 0;
+  const len = bytes.length;
+  while (off + 8 <= len) {
+    let size = u32(view, off);
+    const type = fcc(bytes, off + 4);
+    if (size === 1) {
+      // 64-bit extended size
+      if (off + 16 > len) break;
+      const hi = u32(view, off + 8);
+      const lo = u32(view, off + 12);
+      size = hi * 4294967296 + lo;
+    }
+    if (size < 8) break;
+    if (type === 'moov') return off; // moov is right here (at start of file)
+    if (type === 'mdat') return off + size; // moov follows this mdat
+    // Any other box (ftyp, free, skip, wide…) — step past it
+    off += size;
+    if (size > len - off + off) break; // box extends far beyond head, stop
+  }
+  return null;
+}
+
+// Scan buffer for a box type anywhere (fallback: buffer starts mid-stream)
+function findBoxScan(bytes, view, type) {
+  const t0 = type.charCodeAt(0), t1 = type.charCodeAt(1);
+  const t2 = type.charCodeAt(2), t3 = type.charCodeAt(3);
+  for (let i = 4; i < bytes.length - 8; i++) {
+    if (bytes[i]   !== t0 || bytes[i+1] !== t1 ||
+        bytes[i+2] !== t2 || bytes[i+3] !== t3) continue;
+    const size = u32(view, i - 4);
+    if (size >= 8 && size <= bytes.length - (i - 4)) {
+      return { s: i - 4, e: i - 4 + size };
+    }
+  }
+  return null;
+}
+
+// MP4/MOV: extract fps + file-absolute chunk offset from a buffer containing moov
+function extractTmcdInfo(bytes, view) {
+  const len  = bytes.length;
+  // Aligned scan first (moov-at-start); fall back to unaligned scan (moov-at-end in tail)
+  const moov = findBox(bytes, view, 0, len, 'moov') || findBoxScan(bytes, view, 'moov');
+  if (!moov) return null;
+
+  for (const trak of findAllBoxes(bytes, view, moov.s + 8, moov.e, 'trak')) {
+    const mdia = findBox(bytes, view, trak.s + 8, trak.e, 'mdia');
+    if (!mdia) continue;
+    const hdlr = findBox(bytes, view, mdia.s + 8, mdia.e, 'hdlr');
+    if (!hdlr || fcc(bytes, hdlr.s + 16) !== 'tmcd') continue;
+
+    const minf = findBox(bytes, view, mdia.s + 8, mdia.e, 'minf');
+    if (!minf) continue;
+    const stbl = findBox(bytes, view, minf.s + 8, minf.e, 'stbl');
+    if (!stbl) continue;
+
+    // fps from tmcd stsd — numberOfFrames byte is near the end of the entry
+    // Different encoders place it at different sub-offsets; scan for a sane value
+    let fps = FPS;
+    const stsd = findBox(bytes, view, stbl.s + 8, stbl.e, 'stsd');
+    if (stsd) {
+      const e = stsd.s + 16; // first entry (after stsd header + version/flags + count)
+      for (const off of [32, 33, 34]) {
+        const v = bytes[e + off];
+        if (v >= 12 && v <= 60) { fps = v; break; }
+      }
+    }
+
+    // File-absolute chunk offset from stco
+    const stco = findBox(bytes, view, stbl.s + 8, stbl.e, 'stco');
+    if (!stco || u32(view, stco.s + 12) === 0) continue;
+    const chunkFileOffset = u32(view, stco.s + 16);
+
+    return { fps, chunkFileOffset };
+  }
+  return null;
+}
+
+// Read 4-byte TC sample from file at chunkFileOffset, using headBuf when possible
+async function readTmcdSample(file, headBuf, info) {
+  const { fps, chunkFileOffset } = info;
+
+  let sampleView, sampleOff;
+  if (chunkFileOffset + 4 <= headBuf.byteLength) {
+    sampleView = new DataView(headBuf);
+    sampleOff  = chunkFileOffset;
+  } else {
+    const sb  = await file.slice(chunkFileOffset, chunkFileOffset + 4).arrayBuffer();
+    sampleView = new DataView(sb);
+    sampleOff  = 0;
+  }
+
+  const frameCount = sampleView.getInt32(sampleOff, false);
+  if (frameCount <= 0) return null;
+
+  const h  = Math.floor(frameCount / (3600 * fps));
+  const r1 = frameCount % (3600 * fps);
+  const m  = Math.floor(r1 / (60 * fps));
+  const r2 = r1 % (60 * fps);
+  const s  = Math.floor(r2 / fps);
+  const f  = r2 % fps;
+
+  if (h >= 6 && h <= 23 && m < 60 && s < 60 && f < fps) {
+    return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+  }
+  return null;
+}
+
+// MXF: parse timecode from KLV header metadata
+// MXF stores timecode in a TimecodeComponent local set, which has a fixed 16-byte UL key.
+// Within the set, Start Timecode (local tag 0x1501) is a 64-bit frame count.
+function parseMXFTimecode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view  = new DataView(buffer);
+  const len   = bytes.length;
+
+  // The TimecodeComponent UL key (SMPTE 377M)
+  const TC_KEY = [0x06,0x0E,0x2B,0x34,0x02,0x53,0x01,0x01,
+                  0x0D,0x01,0x01,0x01,0x01,0x18,0x00,0x00];
+
+  for (let i = 0; i < len - 32; i++) {
+    // Quick first-byte check before full compare
+    if (bytes[i] !== 0x06) continue;
+    if (!TC_KEY.every((b, j) => bytes[i + j] === b)) continue;
+
+    // Found TimecodeComponent at i — read BER-encoded length
+    let off = i + 16;
+    let setLen;
+    if (bytes[off] & 0x80) {
+      const n = bytes[off] & 0x7F;
+      setLen = 0;
+      for (let k = 0; k < n; k++) setLen = (setLen * 256) + bytes[off + 1 + k];
+      off += 1 + n;
+    } else {
+      setLen = bytes[off++];
+    }
+
+    const setEnd = Math.min(off + setLen, len);
+    let startFrames = null;
+    let fps = 25;
+
+    // Parse local tag / length / value items within the set
+    while (off + 4 <= setEnd) {
+      const tag = (bytes[off] << 8) | bytes[off + 1];
+      const vlen = (bytes[off + 2] << 8) | bytes[off + 3];
+      off += 4;
+      if (off + vlen > setEnd) break;
+
+      if (tag === 0x1501 && vlen === 8) {
+        // Start Timecode — int64 frame count (upper 32 bits always 0 for realistic values)
+        const lo = view.getUint32(off + 4, false);
+        startFrames = lo;
+      } else if (tag === 0x1502 && vlen === 8) {
+        // Rounded Timecode Base (edit rate as num/den)
+        const num = view.getUint32(off, false);
+        const den = view.getUint32(off + 4, false);
+        if (den > 0) fps = Math.round(num / den);
+      }
+      off += vlen;
+    }
+
+    if (startFrames !== null) {
+      const h  = Math.floor(startFrames / (3600 * fps));
+      const r1 = startFrames % (3600 * fps);
+      const m  = Math.floor(r1 / (60 * fps));
+      const r2 = r1 % (60 * fps);
+      const s  = Math.floor(r2 / fps);
+      const f  = r2 % fps;
+      // Sanity check: plausible broadcast time of day
+      if (h >= 6 && h <= 23 && m < 60 && s < 60 && f < 30) {
+        return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+      }
+    }
+  }
+  return null;
+}
+
+// Last resort: scan for ASCII timecode pattern HH:MM:SS:FF
+function findASCIITimecode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const C = 58;
+  for (let i = 0; i < bytes.length - 11; i++) {
+    if (bytes[i+2] !== C || bytes[i+5] !== C || bytes[i+8] !== C) continue;
+    const d = b => b >= 48 && b <= 57;
+    if (!d(bytes[i]) || !d(bytes[i+1]) || !d(bytes[i+3]) || !d(bytes[i+4]) ||
+        !d(bytes[i+6]) || !d(bytes[i+7]) || !d(bytes[i+9]) || !d(bytes[i+10])) continue;
+    const h = (bytes[i]-48)*10 + (bytes[i+1]-48);
+    const m = (bytes[i+3]-48)*10 + (bytes[i+4]-48);
+    const s = (bytes[i+6]-48)*10 + (bytes[i+7]-48);
+    const f = (bytes[i+9]-48)*10 + (bytes[i+10]-48);
+    if (h >= 6 && h <= 23 && m < 60 && s < 60 && f < 30) {
+      return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+    }
+  }
+  return null;
+}
+
+async function processFile(file) {
+  if (!file) return;
+
+  // Switch drop zone to file-loaded state
+  document.getElementById('dzIdle').style.display = 'none';
+  document.getElementById('dzFile').style.display  = '';
+  document.getElementById('dropZone').classList.add('has-file');
+
+  document.getElementById('fileName').textContent = file.name;
+  setBadge('Reading…', 'warn');
+
+  try {
+    // Always read the first 8 MB (MXF metadata, moov-at-start MP4/MOV, ASCII scan)
+    const HEAD = Math.min(8 * 1024 * 1024, file.size);
+    const headBuf   = await file.slice(0, HEAD).arrayBuffer();
+    const headBytes = new Uint8Array(headBuf);
+    const headView  = new DataView(headBuf);
+
+    let tc = null;
+
+    // 1. Try MXF KLV metadata (always in head)
+    tc = parseMXFTimecode(headBuf);
+
+    // 2. Try MP4/MOV tmcd track — moov at start of file
+    if (!tc) {
+      const info = extractTmcdInfo(headBytes, headView);
+      if (info) tc = await readTmcdSample(file, headBuf, info);
+    }
+
+    // 3. Try MP4/MOV tmcd track — moov at END of file (common for large recordings)
+    //    Parse top-level box headers from the head to compute the exact moov offset,
+    //    then read the moov directly (handles any moov size).
+    if (!tc) {
+      const moovFileOff = findMoovFileOffset(headBytes, headView);
+      if (moovFileOff !== null && moovFileOff + 8 <= file.size) {
+        // Read moov box header (8 bytes) to learn its size
+        const hdrBuf  = await file.slice(moovFileOff, moovFileOff + 8).arrayBuffer();
+        const moovSize = new DataView(hdrBuf).getUint32(0, false);
+        if (moovSize > 8 && moovSize <= 32 * 1024 * 1024) {
+          const moovBuf   = await file.slice(moovFileOff, moovFileOff + moovSize).arrayBuffer();
+          const moovBytes = new Uint8Array(moovBuf);
+          const moovView  = new DataView(moovBuf);
+          const info = extractTmcdInfo(moovBytes, moovView);
+          if (info) tc = await readTmcdSample(file, headBuf, info);
+        }
+      }
+    }
+
+    // 4. ASCII text scan fallback
+    if (!tc) tc = findASCIITimecode(headBuf);
+
+    if (tc) {
+      document.getElementById('startTC').value = tc;
+      localStorage.setItem('tc:' + file.name, tc);
+      setBadge('✓ TC read from file', 'ok');
+    } else {
+      const saved = localStorage.getItem('tc:' + file.name);
+      if (saved) {
+        document.getElementById('startTC').value = saved;
+        setBadge('Loaded from last session', 'warn');
+      } else {
+        setBadge('Could not read — enter TC manually', 'err');
+      }
+    }
+  } catch (e) {
+    console.error('TC read error:', e);
+    setBadge('Read error — enter TC manually', 'err');
+  }
+
+  // ── Timezone auto-detection ────────────────────────────────────────────────
+  const { zone: detectedZone, team: detectedTeam } = zoneFromFilename(file.name);
+  const fileDate = new Date(file.lastModified);
+  tzEnabled = true;
+  document.getElementById('tzBtnOn').className  = 'tz-toggle-seg active-on';
+  document.getElementById('tzBtnOff').className = 'tz-toggle-seg';
+  document.getElementById('tzRow').style.display = '';
+  applyTzZone(detectedZone || 'eastern', fileDate, detectedTeam && detectedZone ? detectedTeam : null);
+  // If we couldn't detect from filename, nudge user
+  if (!detectedZone) {
+    document.getElementById('tzNote').textContent =
+      'Could not detect location from filename — select game city above if needed';
+  }
+  doConvert();
+}
+
+function onFileSelected(input) {
+  processFile(input.files[0]);
+  input.value = '';
+}
+
+function setBadge(text, type) {
+  const b = document.getElementById('tcBadge');
+  b.textContent = text;
+  b.className = 'tc-badge ' + type;
+}
+
+// ── Drag and drop ─────────────────────────────────────────────────────────────
+
+(function () {
+  const zone = document.getElementById('dropZone');
+  let dragDepth = 0; // track nested drag events
+
+  zone.addEventListener('dragenter', e => {
+    e.preventDefault();
+    dragDepth++;
+    zone.classList.add('drag-over');
+  });
+  zone.addEventListener('dragleave', () => {
+    dragDepth--;
+    if (dragDepth === 0) zone.classList.remove('drag-over');
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    dragDepth = 0;
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  });
+})();
+
+// ── Converter ─────────────────────────────────────────────────────────────────
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('inp-e2t').style.display = m === 'e2t' ? '' : 'none';
+  document.getElementById('inp-t2e').style.display = m === 't2e' ? '' : 'none';
+  document.getElementById('tab-e2t').classList.toggle('active', m === 'e2t');
+  document.getElementById('tab-t2e').classList.toggle('active', m === 't2e');
+  document.getElementById('result').innerHTML = '';
+}
+
+// ── Main converter ─────────────────────────────────────────────────────────────
+
+function doConvert() {
+  const resultEl = document.getElementById('result');
+  const startStr = document.getElementById('startTC').value.trim();
+  if (!startStr) { resultEl.innerHTML = ''; return; }
+
+  const rawStart = tcToSecs(startStr);
+  if (rawStart === null) {
+    resultEl.innerHTML = '<div class="result-err">⚠ Invalid start timecode — use HH:MM:SS:FF</div>';
+    return;
+  }
+
+  // Apply timezone offset (0 when disabled or Eastern location)
+  const startSecs = rawStart + tzOffsetSecs;
+  const tzLabel   = evsTZName || 'EVS';
+  const tzHint    = tzOffsetSecs !== 0
+    ? ` · ${calcTzInfo(tzZone, tzDate).recTZ} → ${tzLabel} (${calcTzInfo(tzZone, tzDate).offsetStr})`
+    : '';
+
+  if (mode === 'e2t') {
+    const elapsedStr = document.getElementById('val-elapsed').value.trim();
+    if (!elapsedStr) { resultEl.innerHTML = ''; return; }
+    const elapsed = parseElapsed(elapsedStr);
+    if (elapsed === null) {
+      resultEl.innerHTML = '<div class="result-err">⚠ Cannot parse elapsed time — use MM:SS or HH:MM:SS</div>';
+      return;
+    }
+    const tod = secsToTC(startSecs + elapsed);
+    resultEl.innerHTML = `
+      <div class="result-box">
+        <div class="result-label">Time of Day (${tzLabel}) — use this on EVS</div>
+        <div class="result-val" onclick="copyVal(this)">${tod}</div>
+        <div class="result-hint">Click to copy${tzHint}</div>
+      </div>`;
+
+  } else if (mode === 't2e') {
+    const todStr = document.getElementById('val-tod').value.trim();
+    if (!todStr) { resultEl.innerHTML = ''; return; }
+    const todSecs = parseTOD(todStr);
+    if (todSecs === null) {
+      resultEl.innerHTML = '<div class="result-err">⚠ Cannot parse time of day — use HH:MM:SS or HH:MM:SS:FF</div>';
+      return;
+    }
+    const elapsed = todSecs - startSecs;
+    if (elapsed < 0) {
+      resultEl.innerHTML = '<div class="result-err">⚠ That time of day is before this file starts</div>';
+      return;
+    }
+    const mins = Math.floor(elapsed / 60);
+    const secs = Math.floor(elapsed % 60);
+    const frms = Math.round((elapsed % 1) * FPS);
+    const elStr = `${pad(mins)}:${pad(secs)}:${pad(frms)}`;
+    resultEl.innerHTML = `
+      <div class="result-box">
+        <div class="result-label">File Elapsed — scrub VLC to this position</div>
+        <div class="result-val" onclick="copyVal(this)">${elStr}</div>
+        <div class="result-hint">MM:SS:FF — click to copy${tzHint}</div>
+      </div>`;
+
+  }
+}
+
+function copyVal(el) {
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    el.classList.add('copied');
+    setTimeout(() => el.classList.remove('copied'), 1200);
+  });
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doConvert(); });
+
+// Pre-populate start TC from URL param — lets someone share a pre-filled link
+// e.g. calculator.html?tc=18:49:18:12
+const urlTC = new URLSearchParams(location.search).get('tc');
+if (urlTC) {
+  document.getElementById('startTC').value = urlTC;
+  setBadge('Pre-filled from link', 'warn');
+}
+</script>
+
+</body>
+</html>
